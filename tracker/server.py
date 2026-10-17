@@ -7,6 +7,7 @@ Runs one tracking job at a time on the GPU; the UI polls run status for progress
   POST /medsam2-tracker/api/runs        {"job_id", "frame", "start", "stop", "replace"}
   GET  /medsam2-tracker/api/runs        active runs, oldest first (other users' runs without details)
   GET  /medsam2-tracker/api/runs/<id>   {"state", "stage", "percent", "message", ...}
+  POST /medsam2-tracker/api/runs/<id>/cancel   stop a queued run, or a running one before saving starts
   GET  /medsam2-tracker/api/health      container health check (Traefik skips unhealthy containers)
 """
 
@@ -40,6 +41,9 @@ STAGES = {
     "Removing previous tracking results": (92, 94),
     "Uploading masks": (94, 100),
 }
+# Annotations change from these stages on, so a run can no longer be cancelled cleanly
+SAVING_STAGES = ("Removing previous tracking results", "Uploading masks")
+CANCELLED_MESSAGE = "Tracking cancelled. No changes were made to the annotations."
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("medsam2-tracker")
@@ -58,6 +62,10 @@ def make_cvat_client(cookies):
     return client
 
 
+class RunCancelled(Exception):
+    pass
+
+
 def update_run(run_id, **fields):
     with runs_lock:
         runs[run_id].update(fields, updated=time.time())
@@ -69,9 +77,18 @@ def worker():
 
     while True:
         run_id, request = work.get()
-        update_run(run_id, state="running")
+        with runs_lock:
+            if runs[run_id]["state"] == "cancelled":  # cancelled while queued
+                work.task_done()
+                continue
+            runs[run_id].update(state="running", updated=time.time())
 
         def progress(stage, done, total):
+            with runs_lock:
+                cancel = runs[run_id]["cancel_requested"]
+            # Called before each step; stopping here leaves CVAT untouched until uploading starts
+            if cancel and stage != "Uploading masks":
+                raise RunCancelled()
             low, high = STAGES.get(stage, (0, 100))
             percent = low + (high - low) * (done / total if total else 1)
             message = f"{stage} ({done}/{total})" if total > 1 else stage
@@ -96,6 +113,9 @@ def worker():
                 stage="Done",
                 message=f"Tracked {len(key_shapes)} object(s) from frame {key_frame}: {uploaded} masks added",
             )
+        except RunCancelled:
+            log.info("Run %s cancelled", run_id)
+            update_run(run_id, state="cancelled", stage="Cancelled", message=CANCELLED_MESSAGE)
         except TrackingError as e:
             update_run(run_id, state="failed", message=str(e))
         except ApiException as e:
@@ -165,7 +185,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, body)
 
     def do_POST(self):
-        if self.path != PREFIX + "/runs":
+        is_cancel = self.path.startswith(PREFIX + "/runs/") and self.path.endswith("/cancel")
+        if self.path != PREFIX + "/runs" and not is_cancel:
             return self.send_json(404, {"message": "Not found"})
 
         cookies = self.get_cookies()
@@ -174,6 +195,9 @@ class Handler(BaseHTTPRequestHandler):
         # Double-submit check: a page from another site can send the cookies, but cannot read them
         if self.headers.get("X-CSRFToken") != cookies["csrftoken"]:
             return self.send_json(403, {"message": "Missing or invalid CSRF token"})
+
+        if is_cancel:
+            return self.cancel_run(self.path[len(PREFIX + "/runs/") : -len("/cancel")], cookies)
 
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -207,7 +231,8 @@ class Handler(BaseHTTPRequestHandler):
         run_id = uuid.uuid4().hex
         now = time.time()
         with runs_lock:
-            for old_id in [i for i, r in runs.items() if r["state"] in ("done", "failed") and now - r["updated"] > RUN_TTL]:
+            finished = ("done", "failed", "cancelled")
+            for old_id in [i for i, r in runs.items() if r["state"] in finished and now - r["updated"] > RUN_TTL]:
                 del runs[old_id]
             runs[run_id] = {
                 "id": run_id,
@@ -219,10 +244,31 @@ class Handler(BaseHTTPRequestHandler):
                 "created": now,
                 "updated": now,
                 "sessionid": cookies["sessionid"],
+                "cancel_requested": False,
             }
         work.put((run_id, request))
         log.info("Queued run %s for job %s, frames %s..%s", run_id, request["job_id"], request["start"], request["stop"])
         self.send_json(202, {"id": run_id})
+
+    def cancel_run(self, run_id, cookies):
+        with runs_lock:
+            run = runs.get(run_id)
+            if run is None or run["sessionid"] != cookies["sessionid"]:
+                return self.send_json(404, {"message": "Unknown tracking run"})
+            if run["state"] == "queued":
+                # The worker skips cancelled runs when it reaches them
+                run.update(state="cancelled", stage="Cancelled", message=CANCELLED_MESSAGE, updated=time.time())
+            elif run["state"] == "running":
+                if run["stage"] in SAVING_STAGES:
+                    return self.send_json(409, {"message": "Too late to cancel: the masks are already being saved."})
+                # Stops at the worker's next progress update
+                run.update(cancel_requested=True, message="Cancelling...", updated=time.time())
+            else:
+                ended = {"done": "finished", "failed": "failed", "cancelled": "been cancelled"}[run["state"]]
+                return self.send_json(409, {"message": f"This tracking run has already {ended}."})
+            body = self.run_view(run)
+        log.info("Cancel requested for run %s", run_id)
+        self.send_json(200, body)
 
     def log_message(self, format, *args):
         pass  # the UI polls every second; don't log each request

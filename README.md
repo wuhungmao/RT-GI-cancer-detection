@@ -10,6 +10,7 @@ On the server, from the `RT-GI-cancer-detection` folder:
 
 ./scripts/deploy_medsam2.sh   # builds MedSAM2 for CVAT (interactor + "Track with MedSAM2") on the AMD GPU (once, CVAT must be running)
 ./scripts/deploy_transt.sh    # builds the TransT tracker on the AMD GPU (once, replaces the CPU version)
+./scripts/setup_cvat_project.sh   # creates the "GI cancer detection" project with Neoplasia, Dysplasia, Normal (safe to re-run)
 ./scripts/medsam2_track.sh <task-id>   # propagates key-frame masks through a CVAT task with MedSAM2
 
 ./scripts/stop_cvat.sh        # stops CVAT and its AI models (data is kept)
@@ -247,8 +248,12 @@ MedSAM2 is available in CVAT in two ways, both entirely in the browser:
 2. Open the job and go to the frame where the object is clearly visible.
 3. Annotate each object to track with a mask, polygon or box
    (the MedSAM2 interactor is the quickest way to get a mask).
-4. Open **Menu** (top left) → **Track with MedSAM2**, check the frame range, and click **Start tracking**.
+4. Open **Menu** (top left) → **Track with MedSAM2**, enter the frame range, and click **Start tracking**.
+   Tracking starts from the **first frame in the range that has a mask, polygon or box** (the window shows which
+   frame) and fills the rest of the range, backward and forward. It does not matter which frame you are on.
    Unsaved annotations are saved automatically first.
+
+   To fix a stretch of frames, e.g. 650–930: correct (or redraw) the mask on frame 650, then track 650 to 930.
 5. A progress bar shows downloading, tracking and uploading. You can close the window and keep working;
    a message appears when tracking finishes and the new masks are loaded into the job automatically.
 6. Review the masks and fix frames where the tracking drifted.
@@ -258,6 +263,9 @@ of the same labels before adding the new ones, so you can re-run tracking after 
 Masks you drew or edited yourself are never removed.
 
 Tracking runs one at a time on the GPU. If someone else is tracking, the progress window says so and yours starts next.
+
+To stop a run, open **Menu → Track with MedSAM2** and click **Cancel tracking** (your runs on other jobs have a
+**Cancel** link in the list). Cancelling is possible until the masks start being saved, and leaves the annotations unchanged.
 
 ### Tracking from the terminal
 

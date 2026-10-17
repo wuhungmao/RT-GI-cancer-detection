@@ -1,5 +1,5 @@
 // CVAT UI plugin: adds "Track with MedSAM2" to the annotation page Menu.
-// It sends the current job and frame to the MedSAM2 tracker service (tracker/server.py,
+// It sends the job, frame range and key frame to the MedSAM2 tracker service (tracker/server.py,
 // routed at /medsam2-tracker/ on the CVAT address), shows its progress,
 // and reloads the job's annotations when tracking finishes.
 //
@@ -27,7 +27,7 @@ const OPEN_EVENT = 'medsam2-tracker.open';
 const POLL_INTERVAL_MS = 1000;
 
 interface RunStatus {
-    state: 'queued' | 'running' | 'done' | 'failed';
+    state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
     percent: number;
     message: string;
 }
@@ -41,6 +41,15 @@ interface QueueEntry {
     stage: string;
     percent: number;
     message?: string;
+}
+
+// CVAT annotation filter (JsonLogic) matching the objects the tracker can start from
+const KEY_OBJECTS_FILTER = [{ or: ['mask', 'polygon', 'rectangle'].map((shape) => ({ '==': [{ var: 'shape' }, shape] })) }];
+
+// The key frame is the first frame in the range with a mask, polygon or box (null if none)
+async function findKeyFrame(job: Job, start: number, stop: number): Promise<number | null> {
+    if (start > stop) return null;
+    return job.annotations.search(start, stop, { allowDeletedFrames: false, annotationsFilters: KEY_OBJECTS_FILTER });
 }
 
 function getCookie(name: string): string {
@@ -65,6 +74,15 @@ async function callTracker(path: string, init: RequestInit = {}): Promise<any> {
     return body;
 }
 
+async function cancelRun(id: string): Promise<RunStatus | null> {
+    try {
+        return await callTracker(`/runs/${id}/cancel`, { method: 'POST' });
+    } catch (e: any) {
+        notification.warning({ message: 'Could not cancel tracking', description: e.message });
+        return null;
+    }
+}
+
 // Other active runs on the GPU, oldest (= running) first
 function QueueList(
     { queue, currentRunID, currentJobID }: { queue: QueueEntry[], currentRunID: string | null, currentJobID: number },
@@ -85,6 +103,11 @@ function QueueList(
                     // eslint-disable-next-line react/no-array-index-key
                     <div key={run.id ?? index}>
                         <Text type='secondary'>{`${name}: ${stage}`}</Text>
+                        {run.mine && run.id && (
+                            <Button type='link' size='small' danger onClick={() => cancelRun(run.id as string)}>
+                                Cancel
+                            </Button>
+                        )}
                         <Progress percent={Math.floor(run.percent)} size='small' status={run.state === 'running' ? 'active' : 'normal'} />
                     </div>
                 );
@@ -96,13 +119,12 @@ function QueueList(
 function TrackerModal(): JSX.Element | null {
     const dispatch = useDispatch();
     const job = useSelector((state: CombinedState) => state.annotation.job.instance) as Job | null;
-    const frame = useSelector((state: CombinedState) => state.annotation.player.frame.number);
 
     const [open, setOpen] = useState(false);
     const [start, setStart] = useState(0);
     const [stop, setStop] = useState(0);
     const [replace, setReplace] = useState(true);
-    const [keyFrame, setKeyFrame] = useState(0);
+    const [keyFrame, setKeyFrame] = useState<number | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [runID, setRunID] = useState<string | null>(null);
@@ -114,7 +136,6 @@ function TrackerModal(): JSX.Element | null {
     useEffect(() => {
         const onOpen = async (): Promise<void> => {
             if (!running && job) {
-                setKeyFrame(frame);
                 setStart(job.startFrame);
                 setStop(job.stopFrame);
                 setError(null);
@@ -138,7 +159,17 @@ function TrackerModal(): JSX.Element | null {
         };
         window.addEventListener(OPEN_EVENT, onOpen);
         return () => window.removeEventListener(OPEN_EVENT, onOpen);
-    }, [running, job, frame]);
+    }, [running, job]);
+
+    // Show which frame tracking will start from whenever the range changes
+    useEffect(() => {
+        if (!open || runID || !job) return undefined;
+        let outdated = false;
+        findKeyFrame(job, start, stop).then((found) => {
+            if (!outdated) setKeyFrame(found);
+        });
+        return () => { outdated = true; };
+    }, [open, runID, job, start, stop]);
 
     const reloadAnnotations = useCallback(async (): Promise<void> => {
         if (!job) return;
@@ -169,6 +200,10 @@ function TrackerModal(): JSX.Element | null {
                 }
                 if (result.state === 'failed') {
                     notification.error({ message: 'MedSAM2 tracking failed', description: result.message });
+                    return;
+                }
+                if (result.state === 'cancelled') {
+                    notification.info({ message: 'MedSAM2 tracking cancelled', description: result.message });
                     return;
                 }
             } catch (e: any) {
@@ -211,7 +246,7 @@ function TrackerModal(): JSX.Element | null {
 
     if (!job) return null;
 
-    const rangeValid = start <= keyFrame && keyFrame <= stop;
+    const rangeValid = keyFrame !== null && start <= keyFrame && keyFrame <= stop;
     let footer: JSX.Element[];
     if (!runID) {
         footer = [
@@ -222,6 +257,21 @@ function TrackerModal(): JSX.Element | null {
         ];
     } else {
         footer = [<Button key='close' type={running ? 'default' : 'primary'} onClick={() => setOpen(false)}>Close</Button>];
+        if (running) {
+            footer.unshift(
+                <Button
+                    key='cancel-run'
+                    danger
+                    disabled={(status?.message ?? '').startsWith('Cancelling')}
+                    onClick={async () => {
+                        const result = await cancelRun(runID as string);
+                        if (result) setStatus(result);
+                    }}
+                >
+                    Cancel tracking
+                </Button>,
+            );
+        }
     }
 
     return (
@@ -235,25 +285,40 @@ function TrackerModal(): JSX.Element | null {
             {!runID ? (
                 <Space direction='vertical' style={{ width: '100%' }}>
                     <Text>
-                        {`Every mask, polygon and box on frame ${keyFrame} (the current frame) will be tracked `}
-                        through the frames below. Masks from MedSAM2 are added to the other frames.
+                        MedSAM2 starts from the first frame in this range that has a mask, polygon or box,
+                        and tracks those objects through the rest of the range.
                     </Text>
                     <Space>
                         <Text>From frame</Text>
                         <InputNumber
                             min={job.startFrame}
-                            max={keyFrame}
+                            max={job.stopFrame}
                             value={start}
                             onChange={(value) => setStart(Number(value ?? job.startFrame))}
                         />
                         <Text>to frame</Text>
                         <InputNumber
-                            min={keyFrame}
+                            min={job.startFrame}
                             max={job.stopFrame}
                             value={stop}
                             onChange={(value) => setStop(Number(value ?? job.stopFrame))}
                         />
                     </Space>
+                    {start > stop && <Alert type='warning' message='"From frame" must not be after "to frame".' />}
+                    {start <= stop && keyFrame === null && (
+                        <Alert
+                            type='warning'
+                            message={`There is no mask, polygon or box between frames ${start} and ${stop}. ` +
+                                'Draw one in this range first.'}
+                        />
+                    )}
+                    {rangeValid && keyFrame !== null && (
+                        <Text strong>
+                            {`Starts from frame ${keyFrame}` +
+                                (keyFrame > start ? `, tracking backward to frame ${start}` : '') +
+                                (keyFrame < stop ? ` and forward to frame ${stop}.` : '.')}
+                        </Text>
+                    )}
                     <Checkbox checked={replace} onChange={(e) => setReplace(e.target.checked)}>
                         Replace masks from earlier MedSAM2 tracking (your own edits are kept)
                     </Checkbox>
@@ -264,7 +329,9 @@ function TrackerModal(): JSX.Element | null {
                 <Space direction='vertical' style={{ width: '100%' }}>
                     <Progress
                         percent={Math.floor(status?.percent ?? 0)}
-                        status={status?.state === 'failed' ? 'exception' : (status?.state === 'done' ? 'success' : 'active')}
+                        status={{
+                            failed: 'exception', done: 'success', cancelled: 'normal', queued: 'active', running: 'active',
+                        }[status?.state ?? 'queued'] as 'exception' | 'success' | 'normal' | 'active'}
                     />
                     {status?.state === 'failed' ? (
                         <Alert type='error' message={status.message} style={{ whiteSpace: 'pre-wrap' }} />
