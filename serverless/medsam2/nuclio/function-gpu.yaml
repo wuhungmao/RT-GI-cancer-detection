@@ -1,0 +1,75 @@
+# MedSAM2 interactor for CVAT, running on the AMD GPU (ROCm).
+# Deploy with ./scripts/deploy_medsam2.sh.
+# GPU access needs the CDI spec from gpu/amd-gpu-cdi.yaml installed in /etc/cdi.
+
+metadata:
+  name: medsam2
+  namespace: cvat
+  annotations:
+    name: MedSAM2
+    version: 2
+    type: interactor
+    spec:
+    min_pos_points: 0
+    min_neg_points: 0
+    startswith_box_optional: true
+    help_message: Draw a box around the object and/or click positive and negative points to get a MedSAM2 mask
+
+spec:
+  description: Interactive medical image segmentation with MedSAM2
+  runtime: 'python:3.12'
+  handler: main:handler
+  eventTimeout: 60s
+  env:
+    - name: MEDSAM2_CONFIG
+      value: configs/sam2.1_hiera_t512.yaml
+    - name: MEDSAM2_CHECKPOINT
+      value: /opt/medsam2/checkpoints/MedSAM2_latest.pt
+
+  build:
+    image: rt-gi.medsam2:latest-gpu
+    # Same image as the medsam2 container: ROCm build of PyTorch
+    baseImage: rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1
+
+    directives:
+      preCopy:
+        - kind: ENV
+          value: DEBIAN_FRONTEND=noninteractive
+        - kind: RUN
+          value: apt-get update && apt-get -y install git curl && rm -rf /var/lib/apt/lists/*
+      # install MedSAM2 without letting pip replace the ROCm build of PyTorch
+        - kind: RUN
+          value: |-
+            git clone --depth 1 https://github.com/bowang-lab/MedSAM2.git /opt/medsam2 \
+              && pip freeze | grep -iE "^(torch|torchvision|torchaudio|triton|pytorch-triton)" > /tmp/keep.txt \
+              && cd /opt/medsam2 \
+              && SAM2_BUILD_CUDA=0 pip install --no-build-isolation --no-cache-dir -e . -c /tmp/keep.txt
+      # download MedSAM2 weights
+        - kind: RUN
+          value: |-
+            mkdir -p /opt/medsam2/checkpoints \
+              && curl -fL -o /opt/medsam2/checkpoints/MedSAM2_latest.pt \
+                https://huggingface.co/wanglab/MedSAM2/resolve/main/MedSAM2_latest.pt
+      # CVAT SDK for scripts/medsam2_track.py, which reuses this image (match the CVAT server version)
+        - kind: RUN
+          value: pip install --no-cache-dir "cvat-sdk==2.78.0" -c /tmp/keep.txt
+
+  triggers:
+    myHttpTrigger:
+      numWorkers: 1
+      kind: 'http'
+      workerAvailabilityTimeoutMilliseconds: 10000
+      attributes:
+        maxRequestBodySize: 33554432 # 32MB
+
+  # Nuclio turns this into `docker run --gpus all`, which the CDI spec maps to the AMD GPU
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+
+  platform:
+    attributes:
+      restartPolicy:
+        name: always
+        maximumRetryCount: 3
+      mountMode: volume

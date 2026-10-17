@@ -1,0 +1,26 @@
+# CDI spec that lets `docker run --gpus all` use the AMD GPU on this server.
+# Nuclio (CVAT's AI functions) can only request GPUs through `--gpus`, so this is
+# needed to run CVAT AI models on the AMD GPU.
+#
+# Install:  sudo mkdir -p /etc/cdi && sudo cp gpu/amd-gpu-cdi.yaml /etc/cdi/amd.yaml
+# Test:     sudo docker run --rm --gpus all rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1 \
+#             python -c "import torch; print(torch.cuda.is_available())"
+#
+# Device paths are for this server's single GPU (check with `ls /dev/dri`).
+cdiVersion: "0.5.0"
+kind: amd.com/gpu
+devices:
+  - name: "0"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/dri/card1
+        - path: /dev/dri/renderD128
+  - name: all
+    containerEdits:
+      deviceNodes:
+        - path: /dev/dri/card1
+        - path: /dev/dri/renderD128
+# Added to the container whenever any GPU above is requested
+containerEdits:
+  deviceNodes:
+    - path: /dev/kfd
