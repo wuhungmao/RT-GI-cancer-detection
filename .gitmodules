@@ -1,3 +1,6 @@
 [submodule "MedSAM2"]
 	path = MedSAM2
 	url = https://github.com/bowang-lab/MedSAM2.git
+[submodule "cvat"]
+	path = cvat
+	url = https://github.com/cvat-ai/cvat
