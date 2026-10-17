@@ -1,0 +1,52 @@
+# Additions to CVAT's docker compose setup for MedSAM2 tracking in the CVAT UI.
+# Used by the scripts in scripts/ (see scripts/cvat_compose.sh); not meant to be run on its own.
+
+services:
+  # Django rejects host names with underscores ("cvat_server") with 400 Bad Request,
+  # so give the CVAT server a name the tracker can use
+  cvat_server:
+    networks:
+      cvat:
+        aliases:
+          - cvat-server
+
+  # Builds the "Track with MedSAM2" plugin into the CVAT UI
+  # (scripts/start_cvat.sh copies cvat-plugins/medsam2-tracker into cvat/cvat-ui/plugins first)
+  cvat_ui:
+    build:
+      args:
+        CLIENT_PLUGINS: plugins/medsam2-tracker
+
+  # Runs tracking for the plugin, on the AMD GPU.
+  # Uses the image built by scripts/deploy_medsam2.sh, so it is in a profile
+  # that the scripts only enable once that image exists.
+  medsam2_tracker:
+    container_name: medsam2_tracker
+    image: rt-gi.medsam2:latest-gpu
+    pull_policy: never
+    profiles: ["medsam2"]
+    restart: always
+    entrypoint: ["python", "/tracker/server.py"]
+    environment:
+      PYTHONPATH: /tracker
+      CVAT_INTERNAL_URL: http://cvat-server:8080
+    volumes:
+      - ${RT_GI_REPO_DIR:?set by scripts/cvat_compose.sh}/tracker:/tracker:ro
+    # Replaces the health check inherited from the Nuclio image, which probes Nuclio's
+    # processor (not running here) and would mark the container unhealthy, so Traefik would skip it
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/medsam2-tracker/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    networks:
+      - cvat
+    labels:
+      traefik.enable: "true"
+      traefik.http.services.medsam2-tracker.loadbalancer.server.port: "8000"
+      traefik.http.routers.medsam2-tracker.rule: Host(`${CVAT_HOST:-localhost}`) && PathPrefix(`/medsam2-tracker/`)
+      traefik.http.routers.medsam2-tracker.entrypoints: web

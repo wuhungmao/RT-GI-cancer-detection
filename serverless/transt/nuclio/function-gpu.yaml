@@ -1,0 +1,75 @@
+# TransT tracker for CVAT, running on the AMD GPU (ROCm).
+# Uses CVAT's TransT code (cvat/serverless/pytorch/dschoerk/transt/nuclio) unchanged;
+# only the build differs from CVAT's CUDA version. Deploy with ./scripts/deploy_transt.sh.
+# GPU access needs the CDI spec from gpu/amd-gpu-cdi.yaml installed in /etc/cdi.
+
+metadata:
+  # Same name as CVAT's TransT, so this replaces the CPU version
+  name: pth-dschoerk-transt
+  namespace: cvat
+  annotations:
+    name: TransT
+    type: tracker
+    spec:
+
+spec:
+  description: Fast Online Object Tracking and Segmentation
+  runtime: 'python:3.12'
+  handler: main:handler
+  eventTimeout: 30s
+  env:
+    - name: PYTHONPATH
+      value: /opt/nuclio/trans-t
+    # TransT's checkpoint stores Python objects, which PyTorch >= 2.6 refuses to load by default
+    - name: TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD
+      value: '1'
+
+  build:
+    image: rt-gi.transt:latest-gpu
+    # Same image as the medsam2 container: ROCm build of PyTorch
+    baseImage: rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1
+    directives:
+      preCopy:
+        - kind: ENV
+          value: DEBIAN_FRONTEND=noninteractive
+        - kind: RUN
+          value: apt-get update && apt-get -y install git ca-certificates && rm -rf /var/lib/apt/lists/*
+      # install deps without letting pip replace the ROCm build of PyTorch
+        - kind: RUN
+          value: |-
+            pip freeze | grep -iE "^(torch|torchvision|torchaudio|triton|pytorch-triton|numpy)" > /tmp/keep.txt \
+              && pip install --no-cache-dir jsonpickle opencv-python-headless -c /tmp/keep.txt
+        - kind: WORKDIR
+          value: /opt/nuclio
+      # TransT targets torchvision < 0.15: patch its version check and the removed model_urls import
+        - kind: RUN
+          value: |-
+            git clone --depth 1 --branch v1.0 https://github.com/dschoerk/TransT trans-t \
+              && sed -i 's%if float(torchvision.__version__\[:3\]) < 0.7%if False%g' trans-t/util/misc.py \
+              && sed -i "s%from torchvision.models.resnet import model_urls%model_urls = {'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth', 'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth'}%" trans-t/ltr/models/backbone/resnet.py
+        - kind: ADD
+          value: https://drive.google.com/uc?id=1Pq0sK-9jmbLAVtgB9-dPDc2pipCxYdM5 /transt.pth
+      # TransT downloads ImageNet ResNet-50 weights on every start; cache them in the image
+        - kind: RUN
+          value: python -c "import torch; torch.hub.load_state_dict_from_url('https://download.pytorch.org/models/resnet50-19c8e357.pth')"
+
+  triggers:
+    myHttpTrigger:
+      numWorkers: 1
+      kind: 'http'
+      workerAvailabilityTimeoutMilliseconds: 10000
+      attributes:
+        # Set value from the calculation of tracking of 100 objects at the same time on a 4k image
+        maxRequestBodySize: 268435456 # 256MB
+
+  # Nuclio turns this into `docker run --gpus all`, which the CDI spec maps to the AMD GPU
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+
+  platform:
+    attributes:
+      restartPolicy:
+        name: always
+        maximumRetryCount: 3
+      mountMode: volume

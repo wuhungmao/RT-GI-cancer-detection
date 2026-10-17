@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Build and deploy the MedSAM2 interactor as a CVAT AI function on the AMD GPU.
+# Build and deploy the MedSAM2 interactor as a CVAT AI function on the AMD GPU,
+# and (re)start the tracker service behind "Track with MedSAM2", which uses the same image.
 # Needs CVAT running (./scripts/start_cvat.sh) and the CDI spec installed (see README).
 # Usage: ./scripts/deploy_medsam2.sh
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/cvat_compose.sh"
 FUNC_DIR="$REPO_DIR/serverless/medsam2/nuclio"
 
 if [ ! -e /etc/cdi/amd.yaml ]; then
@@ -21,3 +22,6 @@ sudo nuctl deploy --project-name cvat --path "$FUNC_DIR" \
   --platform-config '{"attributes": {"network": "cvat_cvat"}}'
 
 sudo nuctl get function --platform local
+
+echo "Starting the MedSAM2 tracker service..."
+cvat_compose up -d medsam2_tracker

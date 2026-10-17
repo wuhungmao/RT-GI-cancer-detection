@@ -1,5 +1,23 @@
 # RT-GI-cancer-detection
 
+## Quick start
+
+On the server, from the `RT-GI-cancer-detection` folder:
+
+```bash
+./scripts/start_cvat.sh       # starts CVAT in the background
+./scripts/start_medsam2.sh    # starts the MedSAM2 web app (Ctrl+C to stop)
+
+./scripts/deploy_medsam2.sh   # builds MedSAM2 for CVAT (interactor + "Track with MedSAM2") on the AMD GPU (once, CVAT must be running)
+./scripts/deploy_transt.sh    # builds the TransT tracker on the AMD GPU (once, replaces the CPU version)
+./scripts/medsam2_track.sh <task-id>   # propagates key-frame masks through a CVAT task with MedSAM2
+
+./scripts/stop_cvat.sh        # stops CVAT and its AI models (data is kept)
+./scripts/stop_medsam2.sh     # stops the MedSAM2 container
+```
+
+Each script prints the `ssh -L` command to run on your own computer to open the page. The sections below explain each step.
+
 ## Installing MedSAM2
 
 Below are the commands I used to build MedSAM2.
@@ -137,3 +155,118 @@ You should see the MedSAM2 page.
 7. Click **Start Tracking** to turn the raw video into an annotated video.
 
 You can check the progress in the terminal.
+
+---
+
+## Running CVAT on the server
+
+CVAT is in the `cvat` folder (a submodule) and runs with Docker Compose.
+
+### 0. Let Docker use the AMD GPU (once per server)
+
+CVAT's AI models (Nuclio functions) can only ask Docker for a GPU with `--gpus all`.
+This CDI file tells Docker which device files that means on our AMD server:
+
+```bash
+sudo mkdir -p /etc/cdi
+sudo cp gpu/amd-gpu-cdi.yaml /etc/cdi/amd.yaml
+```
+
+Check that it works (should print `True`):
+
+```bash
+sudo docker run --rm --gpus all rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1 \
+  python -c "import torch; print(torch.cuda.is_available())"
+```
+
+### 1. Log in to the server
+
+```bash
+ssh medcvr@100.113.46.199
+```
+
+### 2. Start CVAT
+
+```bash
+cd ~/RT-GI-cancer-detection
+./scripts/start_cvat.sh
+```
+
+This builds and starts CVAT with our additions (`docker-compose.medsam2.yml`): the "Track with MedSAM2"
+UI plugin and, once `./scripts/deploy_medsam2.sh` has been run, the tracker service behind it.
+The first build takes a while. Later starts are faster.
+
+To stop CVAT:
+
+```bash
+./scripts/stop_cvat.sh
+```
+
+> **Warning:** Always start and stop CVAT with these scripts. If you run `docker compose` by hand, include all four
+> compose files (see `scripts/cvat_compose.sh`), and never add `-v` to `down`: it deletes all CVAT data and annotations.
+
+### 3. Create an admin account (first time only)
+
+```bash
+sudo docker exec -it cvat_server bash -ic 'python3 ~/manage.py createsuperuser'
+```
+
+### 4. Forward the port to your computer
+
+Open a terminal on your local laptop/computer:
+
+```bash
+ssh -L 8080:localhost:8080 medcvr@100.113.46.199
+```
+
+Then go to Chrome (or another browser) and enter:
+
+```
+http://localhost:8080
+```
+
+You should see the CVAT login page.
+
+---
+
+## Tracking with MedSAM2 in CVAT
+
+Setup (once, on the server): `./scripts/start_cvat.sh`, then `./scripts/deploy_medsam2.sh`.
+
+MedSAM2 is available in CVAT in two ways, both entirely in the browser:
+
+- **Interactor**: segments one object on the current frame.
+  In a job, open **AI Tools → Interactors → MedSAM2**, draw a box around the object
+  and/or click positive and negative points, then press **N** to keep the mask.
+- **Track with MedSAM2**: copies the masks on the current frame to the other frames of the job.
+
+### Tracking an object through a video
+
+1. Create a CVAT task from the video. Use a frame step (e.g. 25 for a 25 fps video, so 1 frame per second)
+   to keep the number of frames manageable.
+2. Open the job and go to the frame where the object is clearly visible.
+3. Annotate each object to track with a mask, polygon or box
+   (the MedSAM2 interactor is the quickest way to get a mask).
+4. Open **Menu** (top left) → **Track with MedSAM2**, check the frame range, and click **Start tracking**.
+   Unsaved annotations are saved automatically first.
+5. A progress bar shows downloading, tracking and uploading. You can close the window and keep working;
+   a message appears when tracking finishes and the new masks are loaded into the job automatically.
+6. Review the masks and fix frames where the tracking drifted.
+
+**Replace masks from earlier MedSAM2 tracking** (on by default) removes masks from previous tracking runs
+of the same labels before adding the new ones, so you can re-run tracking after fixing the key frame.
+Masks you drew or edited yourself are never removed.
+
+Tracking runs one at a time on the GPU. If someone else is tracking, the progress window says so and yours starts next.
+
+### Tracking from the terminal
+
+The same tracking for a whole task (task ID from the task URL, e.g. `/tasks/12`):
+
+```bash
+./scripts/medsam2_track.sh 12            # asks for your CVAT username and password
+./scripts/medsam2_track.sh 12 --replace  # remove masks from earlier tracking runs first
+```
+
+Other options: `--frame N` (key frame; default: the first frame with a mask or polygon),
+`--start N` / `--stop N` (only process frames N to M).
