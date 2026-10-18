@@ -8,7 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/cvat_compose.sh"
 # The CVAT UI build only sees files inside the cvat folder, so copy our plugin there
 PLUGIN_DIR="$REPO_DIR/cvat/cvat-ui/plugins/medsam2-tracker"
 rm -rf "$PLUGIN_DIR"
-cp -r "$REPO_DIR/cvat-plugins/medsam2-tracker" "$PLUGIN_DIR"
+cp -r "$REPO_DIR/cvat-integration/ui-plugin/medsam2-tracker" "$PLUGIN_DIR"
 # ...and keep the copy out of the cvat submodule's git status
 exclude="$(git -C "$REPO_DIR/cvat" rev-parse --absolute-git-dir)/info/exclude"
 mkdir -p "$(dirname "$exclude")"

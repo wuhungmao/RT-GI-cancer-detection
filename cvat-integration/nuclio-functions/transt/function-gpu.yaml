@@ -1,7 +1,7 @@
 # TransT tracker for CVAT, running on the AMD GPU (ROCm).
 # Uses CVAT's TransT code (cvat/serverless/pytorch/dschoerk/transt/nuclio) unchanged;
 # only the build differs from CVAT's CUDA version. Deploy with ./scripts/deploy_transt.sh.
-# GPU access needs the CDI spec from gpu/amd-gpu-cdi.yaml installed in /etc/cdi.
+# GPU access needs the CDI spec from config/amd-gpu-cdi.yaml installed in /etc/cdi.
 
 metadata:
   # Same name as CVAT's TransT, so this replaces the CPU version

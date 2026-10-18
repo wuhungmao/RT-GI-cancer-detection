@@ -1,6 +1,6 @@
 # MedSAM2 interactor for CVAT, running on the AMD GPU (ROCm).
 # Deploy with ./scripts/deploy_medsam2.sh.
-# GPU access needs the CDI spec from gpu/amd-gpu-cdi.yaml installed in /etc/cdi.
+# GPU access needs the CDI spec from config/amd-gpu-cdi.yaml installed in /etc/cdi.
 
 metadata:
   name: medsam2

@@ -19,6 +19,24 @@ On the server, from the `RT-GI-cancer-detection` folder:
 
 Each script prints the `ssh -L` command to run on your own computer to open the page. The sections below explain each step.
 
+## Repository layout
+
+```
+MedSAM2/                    MedSAM2 code (submodule, our fork) - the standalone MedSAM2 web app
+cvat/                       CVAT annotation tool (submodule, unmodified upstream)
+cvat-integration/           everything we add to CVAT
+  nuclio-functions/         AI models CVAT calls, run by Nuclio ("serverless" functions), on the AMD GPU
+    medsam2/                MedSAM2 interactor: mask for one object on the current frame
+    transt/                 TransT box tracker (build config only; the code comes from cvat/serverless/)
+  tracker-service/          service behind "Track with MedSAM2": propagates key-frame masks through a job
+  ui-plugin/medsam2-tracker CVAT UI plugin: the "Track with MedSAM2" menu item and progress window
+                            (CVAT requires the src/ts/index.tsx layout; start_cvat.sh copies it into cvat/)
+config/                     settings files
+  amd-gpu-cdi.yaml          lets Docker's --gpus all use the AMD GPU (install into /etc/cdi)
+  docker-compose.medsam2.yml  our additions to CVAT's docker compose (UI plugin, tracker service)
+scripts/                    everything you run (see Quick start)
+```
+
 ## Installing MedSAM2
 
 Below are the commands I used to build MedSAM2.
@@ -170,7 +188,7 @@ This CDI file tells Docker which device files that means on our AMD server:
 
 ```bash
 sudo mkdir -p /etc/cdi
-sudo cp gpu/amd-gpu-cdi.yaml /etc/cdi/amd.yaml
+sudo cp config/amd-gpu-cdi.yaml /etc/cdi/amd.yaml
 ```
 
 Check that it works (should print `True`):
@@ -193,7 +211,7 @@ cd ~/RT-GI-cancer-detection
 ./scripts/start_cvat.sh
 ```
 
-This builds and starts CVAT with our additions (`docker-compose.medsam2.yml`): the "Track with MedSAM2"
+This builds and starts CVAT with our additions (`config/docker-compose.medsam2.yml`): the "Track with MedSAM2"
 UI plugin and, once `./scripts/deploy_medsam2.sh` has been run, the tracker service behind it.
 The first build takes a while. Later starts are faster.
 

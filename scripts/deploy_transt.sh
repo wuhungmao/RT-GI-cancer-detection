@@ -7,11 +7,11 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Code from CVAT's TransT function, build config from our ROCm version
 CODE_DIR="$REPO_DIR/cvat/serverless/pytorch/dschoerk/transt/nuclio"
-CONFIG="$REPO_DIR/serverless/transt/nuclio/function-gpu.yaml"
+CONFIG="$REPO_DIR/cvat-integration/nuclio-functions/transt/function-gpu.yaml"
 
 if [ ! -e /etc/cdi/amd.yaml ]; then
   echo "AMD GPU CDI spec not installed. Run:"
-  echo "  sudo mkdir -p /etc/cdi && sudo cp $REPO_DIR/gpu/amd-gpu-cdi.yaml /etc/cdi/amd.yaml"
+  echo "  sudo mkdir -p /etc/cdi && sudo cp $REPO_DIR/config/amd-gpu-cdi.yaml /etc/cdi/amd.yaml"
   exit 1
 fi
 

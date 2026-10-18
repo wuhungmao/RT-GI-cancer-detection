@@ -16,5 +16,5 @@ fi
 # --network host: reach CVAT at localhost:8080; --gpus all: AMD GPU via the CDI spec
 sudo docker run --rm -it --gpus all --network host \
   -e CVAT_URL="${CVAT_URL:-}" -e CVAT_USER="${CVAT_USER:-}" -e CVAT_PASSWORD="${CVAT_PASSWORD:-}" \
-  -v "$REPO_DIR/scripts":/scripts:ro -v "$REPO_DIR/tracker":/tracker:ro -e PYTHONPATH=/tracker \
+  -v "$REPO_DIR/scripts":/scripts:ro -v "$REPO_DIR/cvat-integration/tracker-service":/tracker:ro -e PYTHONPATH=/tracker \
   --entrypoint python "$IMAGE" /scripts/medsam2_track.py "$@"

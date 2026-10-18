@@ -2,7 +2,7 @@
 # Nuclio (CVAT's AI functions) can only request GPUs through `--gpus`, so this is
 # needed to run CVAT AI models on the AMD GPU.
 #
-# Install:  sudo mkdir -p /etc/cdi && sudo cp gpu/amd-gpu-cdi.yaml /etc/cdi/amd.yaml
+# Install:  sudo mkdir -p /etc/cdi && sudo cp config/amd-gpu-cdi.yaml /etc/cdi/amd.yaml
 # Test:     sudo docker run --rm --gpus all rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1 \
 #             python -c "import torch; print(torch.cuda.is_available())"
 #

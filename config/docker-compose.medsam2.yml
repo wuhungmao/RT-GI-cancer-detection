@@ -11,7 +11,7 @@ services:
           - cvat-server
 
   # Builds the "Track with MedSAM2" plugin into the CVAT UI
-  # (scripts/start_cvat.sh copies cvat-plugins/medsam2-tracker into cvat/cvat-ui/plugins first)
+  # (scripts/start_cvat.sh copies cvat-integration/ui-plugin/medsam2-tracker into cvat/cvat-ui/plugins first)
   cvat_ui:
     build:
       args:
@@ -31,7 +31,7 @@ services:
       PYTHONPATH: /tracker
       CVAT_INTERNAL_URL: http://cvat-server:8080
     volumes:
-      - ${RT_GI_REPO_DIR:?set by scripts/cvat_compose.sh}/tracker:/tracker:ro
+      - ${RT_GI_REPO_DIR:?set by scripts/cvat_compose.sh}/cvat-integration/tracker-service:/tracker:ro
     # Replaces the health check inherited from the Nuclio image, which probes Nuclio's
     # processor (not running here) and would mark the container unhealthy, so Traefik would skip it
     healthcheck:

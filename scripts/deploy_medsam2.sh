@@ -6,11 +6,11 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/cvat_compose.sh"
-FUNC_DIR="$REPO_DIR/serverless/medsam2/nuclio"
+FUNC_DIR="$REPO_DIR/cvat-integration/nuclio-functions/medsam2"
 
 if [ ! -e /etc/cdi/amd.yaml ]; then
   echo "AMD GPU CDI spec not installed. Run:"
-  echo "  sudo mkdir -p /etc/cdi && sudo cp $REPO_DIR/gpu/amd-gpu-cdi.yaml /etc/cdi/amd.yaml"
+  echo "  sudo mkdir -p /etc/cdi && sudo cp $REPO_DIR/config/amd-gpu-cdi.yaml /etc/cdi/amd.yaml"
   exit 1
 fi
 

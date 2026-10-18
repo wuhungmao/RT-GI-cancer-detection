@@ -17,7 +17,7 @@ cvat_compose() {
       -f docker-compose.yml \
       -f docker-compose.dev.yml \
       -f components/serverless/docker-compose.serverless.yml \
-      -f "$REPO_DIR/docker-compose.medsam2.yml" \
+      -f "$REPO_DIR/config/docker-compose.medsam2.yml" \
       "${profile[@]}" "$@"
   )
 }

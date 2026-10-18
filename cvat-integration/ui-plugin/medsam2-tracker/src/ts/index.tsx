@@ -1,5 +1,5 @@
 // CVAT UI plugin: adds "Track with MedSAM2" to the annotation page Menu.
-// It sends the job, frame range and key frame to the MedSAM2 tracker service (tracker/server.py,
+// It sends the job, frame range and key frame to the MedSAM2 tracker service (cvat-integration/tracker-service/server.py,
 // routed at /medsam2-tracker/ on the CVAT address), shows its progress,
 // and reloads the job's annotations when tracking finishes.
 //
